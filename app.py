@@ -66,11 +66,19 @@ def is_auth():
     return request.cookies.get(COOKIE) == _token()
 
 
+def is_api_auth():
+    return request.headers.get("X-API-Key") == _token()
+
+
 def require_auth(fn):
     from functools import wraps
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        if is_api_auth():
+            return fn(*args, **kwargs)
         if not is_auth():
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "unauthorized"}), 401
             return redirect("/login")
         return fn(*args, **kwargs)
     return wrapper
@@ -637,6 +645,72 @@ def delete_task(tid):
     db.execute("DELETE FROM tasks WHERE id=?", (tid,))
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/api/tasks/<int:tid>", methods=["PATCH"])
+@require_auth
+def patch_task(tid):
+    d  = request.json
+    db = get_db()
+    allowed = {"status", "priority", "assignee", "due_date", "title", "description"}
+    fields  = {k: v for k, v in d.items() if k in allowed}
+    if not fields:
+        return jsonify({"error": "no valid fields"}), 400
+    fields["updated_at"] = int(time.time() * 1000)
+    sql = "UPDATE tasks SET " + ", ".join(f"{k}=?" for k in fields) + " WHERE id=?"
+    db.execute(sql, list(fields.values()) + [tid])
+    db.commit()
+    task = db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+    return jsonify(dict(task) if task else {"error": "not found"})
+
+
+@app.route("/api/projects", methods=["GET"])
+@require_auth
+def list_projects():
+    db    = get_db()
+    projs = db.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    result = []
+    for p in projs:
+        rows   = db.execute(
+            "SELECT status, COUNT(*) as n FROM tasks WHERE project_id=? GROUP BY status", (p["id"],)
+        ).fetchall()
+        counts = {r["status"]: r["n"] for r in rows}
+        total  = sum(counts.values())
+        done   = counts.get("done", 0)
+        result.append({**dict(p), "total_tasks": total, "done_tasks": done,
+                       "in_progress_tasks": counts.get("in_progress", 0),
+                       "blocked_tasks": counts.get("blocked", 0),
+                       "todo_tasks": counts.get("todo", 0),
+                       "pct": round(done / total * 100) if total else 0})
+    return jsonify(result)
+
+
+@app.route("/api/tasks", methods=["GET"])
+@require_auth
+def list_tasks():
+    db      = get_db()
+    filters = []
+    params  = []
+    if pid := request.args.get("project_id"):
+        filters.append("project_id=?")
+        params.append(int(pid))
+    if status := request.args.get("status"):
+        filters.append("status=?")
+        params.append(status)
+    if priority := request.args.get("priority"):
+        filters.append("priority=?")
+        params.append(priority)
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    tasks = db.execute(
+        f"SELECT * FROM tasks {where} ORDER BY priority DESC, created_at", params
+    ).fetchall()
+    return jsonify([dict(t) for t in tasks])
+
+
+@app.route("/api/token", methods=["GET"])
+@require_auth
+def get_token():
+    return jsonify({"token": _token()})
 
 
 if __name__ == "__main__":
