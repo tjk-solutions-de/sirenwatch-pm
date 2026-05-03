@@ -445,7 +445,7 @@ function openTask(id){
   document.getElementById('modal-task-title').textContent = id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe';
   document.getElementById('btn-delete-task').style.display = id ? 'inline-flex' : 'none';
   if(id){
-    const t = {{ tasks_json }}.find(x=>x.id===id);
+    const t = {{ tasks_list|tojson }}.find(x=>x.id===id);
     if(t){
       document.getElementById('task-title').value    = t.title;
       document.getElementById('task-desc').value     = t.description||'';
@@ -570,7 +570,7 @@ def project_detail(pid):
     import datetime
     today = datetime.date.today().isoformat()
     return render_template_string(_PROJECT, project=dict(p), tasks_by_status=by_status,
-                                  tasks_json=json.dumps(tasks_list),
+                                  tasks_list=tasks_list,
                                   total_count=total, done_count=done, pct=pct, today=today,
                                   user="Admin")
 
